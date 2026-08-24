@@ -1,0 +1,47 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: fandub_postgres
+    environment:
+      POSTGRES_USER: fandub
+      POSTGRES_PASSWORD: fandubpassword
+      POSTGRES_DB: fandubdb
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fandub -d fandubdb"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: fandub_redis
+    ports:
+      - "6379:6379"
+
+  backend:
+    build:
+      context: ../apps/backend
+    container_name: fandub_backend
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://fandub:fandubpassword@postgres:5432/fandubdb
+      REDIS_URL: redis://redis:6379/0
+      STORAGE_PATH: /app/storage
+    volumes:
+      - media_storage:/app/storage
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+volumes:
+  postgres_data:
+  media_storage:

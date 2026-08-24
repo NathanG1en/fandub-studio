@@ -1,0 +1,63 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --font-inter: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+}
+
+body {
+  font-family: var(--font-inter);
+  background-color: #09090b;
+  color: #fafafa;
+  min-height: 100vh;
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Monospace Utility */
+.font-mono-code {
+  font-family: var(--font-mono);
+}
+
+/* Minimal Panel / Card Utility (Hairline Borders, No Glow Blobs) */
+.minimal-card {
+  background-color: #121215;
+  border: 1px solid #27272a;
+  border-radius: 8px;
+}
+
+.minimal-card-hover {
+  transition: background-color 150ms ease, border-color 150ms ease;
+}
+.minimal-card-hover:hover {
+  background-color: #18181b;
+  border-color: #3f3f46;
+}
+
+/* Tactile Micro-Interactions */
+button, .clickable {
+  transition: transform 120ms ease, background-color 120ms ease, border-color 120ms ease, opacity 120ms ease;
+}
+button:active:not(:disabled), .clickable:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+/* Minimal Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+::-webkit-scrollbar-track {
+  background: #09090b;
+}
+::-webkit-scrollbar-thumb {
+  background: #27272a;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #3f3f46;
+}
