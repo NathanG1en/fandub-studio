@@ -12,6 +12,7 @@ RUN apt-get update && \
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+RUN python -c "import whisper; whisper.load_model('medium.en')"
 
 COPY main.py .
 

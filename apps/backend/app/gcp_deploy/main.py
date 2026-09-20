@@ -13,12 +13,13 @@ class DiarizationSegmentResponse(BaseModel):
     end_time: float
     confidence: float = 1.0
 
+@app.get("/")
 @app.get("/healthz")
 async def health():
     import torch
     cuda_avail = torch.cuda.is_available()
-    device_name = torch.cuda.get_device_name(0) if cuda_avail else "CPU"
-    return {"status": "ok", "cuda_available": cuda_avail, "device": device_name}
+    device_name = torch.cuda.get_device_name(0) if cuda_avail else "CPU (4 vCPUs / 8GB RAM)"
+    return {"status": "ok", "service": "GCP Diarization Microservice", "cuda_available": cuda_avail, "device": device_name}
 
 @app.post("/diarize", response_model=list[DiarizationSegmentResponse])
 async def diarize_audio(
@@ -38,10 +39,17 @@ async def diarize_audio(
             from pyannote.audio import Pipeline
             import torch
 
-            pipeline = Pipeline.from_pretrained(
-                "pyannote/speaker-diarization-3.1",
-                use_auth_token=hf_token
-            )
+            try:
+                pipeline = Pipeline.from_pretrained(
+                    "pyannote/speaker-diarization-3.1",
+                    token=hf_token
+                )
+            except TypeError:
+                pipeline = Pipeline.from_pretrained(
+                    "pyannote/speaker-diarization-3.1",
+                    use_auth_token=hf_token
+                )
+
             if torch.cuda.is_available():
                 pipeline.to(torch.device("cuda"))
 
@@ -50,13 +58,14 @@ async def diarize_audio(
             for turn, _, speaker in diarization.itertracks(yield_label=True):
                 spk_num = str(speaker).replace("SPEAKER_", "").replace("speaker_", "")
                 segments.append(DiarizationSegmentResponse(
-                    speaker_id=f"PyAnnote GPU Speaker {spk_num}",
+                    speaker_id=f"PyAnnote Speaker {spk_num}",
                     start_time=round(turn.start, 2),
                     end_time=round(turn.end, 2)
                 ))
             if segments:
                 return segments
         except Exception as e:
+            print(f"[PyAnnote Loading Error]: {e}")
             pass
 
     # Neural Whisper + PyTorch Acoustic Embedding Diarization Engine
@@ -64,7 +73,7 @@ async def diarize_audio(
         import whisper
         from sklearn.cluster import AgglomerativeClustering
 
-        model = whisper.load_model("tiny.en")
+        model = whisper.load_model("medium.en")
         result = model.transcribe(str(temp_path), word_timestamps=True)
         raw_segments = result.get("segments", [])
 
@@ -90,7 +99,15 @@ async def diarize_audio(
             std_amp = float(np.std(clip))
             zcr = float(np.mean(np.abs(np.diff(np.sign(clip)))) / 2.0)
             rms = float(np.sqrt(np.mean(clip ** 2)))
-            features.append([mean_amp, std_amp, zcr, rms])
+            
+            # Multi-band spectral energy splits for acoustic speaker profiling
+            fft_mag = np.abs(np.fft.rfft(clip))
+            freqs = np.fft.rfftfreq(len(clip), 1.0 / sr)
+            low_band = float(np.mean(fft_mag[freqs < 500])) if np.any(freqs < 500) else 0.0
+            mid_band = float(np.mean(fft_mag[(freqs >= 500) & (freqs < 2000)])) if np.any((freqs >= 500) & (freqs < 2000)) else 0.0
+            high_band = float(np.mean(fft_mag[freqs >= 2000])) if np.any(freqs >= 2000) else 0.0
+            
+            features.append([mean_amp, std_amp, zcr, rms, low_band, mid_band, high_band])
             valid_segments.append((start_s, end_s))
 
         if valid_segments:
@@ -105,7 +122,7 @@ async def diarize_audio(
             for idx, (s, e) in enumerate(valid_segments):
                 spk = labels[idx] + 1
                 output.append(DiarizationSegmentResponse(
-                    speaker_id=f"GCP GPU Speaker {spk}",
+                    speaker_id=f"GCP Speaker {spk}",
                     start_time=round(s, 2),
                     end_time=round(e, 2)
                 ))

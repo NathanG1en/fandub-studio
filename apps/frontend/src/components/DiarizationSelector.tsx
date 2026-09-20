@@ -1,12 +1,13 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Cpu, Sparkles, Check, X, Loader2, Layers } from 'lucide-react';
+import { Cpu, Sparkles, Check, X, Loader2, Layers, AlertTriangle } from 'lucide-react';
 
 interface DiarizationProvider {
   id: string;
   name: string;
   available: boolean;
+  status_message?: string;
 }
 
 interface DiarizationSelectorProps {
@@ -22,6 +23,7 @@ export function DiarizationSelector({ projectId, isOpen, onClose, onRunDiarizati
   const [numSpeakers, setNumSpeakers] = useState<number>(2);
   const [enableSAMAudio, setEnableSAMAudio] = useState<boolean>(true);
   const [isRunning, setIsRunning] = useState<boolean>(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   useEffect(() => {
     async function fetchProviders() {
@@ -36,6 +38,7 @@ export function DiarizationSelector({ projectId, isOpen, onClose, onRunDiarizati
       }
     }
     if (isOpen) {
+      setErrorMessage(null);
       fetchProviders();
     }
   }, [isOpen]);
@@ -44,11 +47,13 @@ export function DiarizationSelector({ projectId, isOpen, onClose, onRunDiarizati
 
   const handleSubmit = async () => {
     setIsRunning(true);
+    setErrorMessage(null);
     try {
       await onRunDiarization(selectedProvider, numSpeakers, enableSAMAudio);
       onClose();
-    } catch (err) {
-      alert('Failed to re-run diarization.');
+    } catch (err: any) {
+      const msg = err?.message || 'Failed to run diarization microservice.';
+      setErrorMessage(msg);
     } finally {
       setIsRunning(false);
     }
@@ -74,6 +79,17 @@ export function DiarizationSelector({ projectId, isOpen, onClose, onRunDiarizati
           </div>
         </div>
 
+        {/* Explicit Failure Banner */}
+        {errorMessage && (
+          <div className="p-3 bg-red-950/60 border border-red-800/80 rounded flex items-start gap-2.5 text-xs text-red-200 font-mono-code">
+            <AlertTriangle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <span className="font-bold uppercase tracking-wider block text-red-400 mb-0.5">Diarization Failed</span>
+              <span>{errorMessage}</span>
+            </div>
+          </div>
+        )}
+
         {/* Diarization Provider Options */}
         <div className="flex flex-col gap-2.5">
           <label className="text-xs font-mono-code uppercase text-zinc-400 font-bold tracking-wider">
@@ -96,10 +112,15 @@ export function DiarizationSelector({ projectId, isOpen, onClose, onRunDiarizati
                 >
                   <div className="flex items-center gap-2.5">
                     <Cpu className={`w-4 h-4 ${isSelected ? 'text-blue-400' : 'text-zinc-500'}`} />
-                    <span className="text-xs font-bold">{p.name}</span>
+                    <div className="flex flex-col">
+                      <span className="text-xs font-bold">{p.name}</span>
+                      {p.status_message && (
+                        <span className="text-[10px] text-zinc-500 font-mono-code">{p.status_message}</span>
+                      )}
+                    </div>
                   </div>
 
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 shrink-0">
                     <span className={`text-[10px] font-mono-code px-2 py-0.5 rounded border ${
                       p.available
                         ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'

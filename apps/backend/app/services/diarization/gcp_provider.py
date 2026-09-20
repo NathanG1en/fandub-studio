@@ -5,12 +5,12 @@ from app.services.diarization.base import BaseDiarizer, DiarizationSegment
 from app.services.diarization.neural_diarizer import neural_whisper_diarizer
 
 class GCPCloudRunDiarizer(BaseDiarizer):
-    """GCP Cloud Run GPU Diarization Provider (NVIDIA L4 GPU)."""
+    """GCP Cloud Run Diarization Provider (High-Performance 4-8 vCPUs / 8-16GB RAM)."""
 
     def __init__(self):
         self.endpoint_url = os.getenv(
             "GCP_GPU_ENDPOINT",
-            "https://fandub-gpu-diarizer-small-pipeline.a.run.app"
+            "https://fandub-diarizer-api-674778260833.us-central1.run.app"
         )
 
     @property
@@ -19,11 +19,10 @@ class GCPCloudRunDiarizer(BaseDiarizer):
 
     @property
     def display_name(self) -> str:
-        return "GCP Cloud GPU (NVIDIA L4)"
+        return "GCP Cloud GPU / High-Performance Compute"
 
     @property
     def is_available(self) -> bool:
-        # Ready when GCP project is authenticated or GCP endpoint configured
         return True
 
     def diarize(self, audio_path: Path, num_speakers: int = 2) -> list[DiarizationSegment]:
@@ -34,7 +33,8 @@ class GCPCloudRunDiarizer(BaseDiarizer):
             with open(audio_path, "rb") as f:
                 files = {"file": (audio_path.name, f, "audio/wav")}
                 data = {"num_speakers": str(num_speakers), "provider": "pyannote"}
-                response = httpx.post(f"{self.endpoint_url}/diarize", files=files, data=data, timeout=30.0)
+                # Set 90s timeout for Cloud Run model cold start
+                response = httpx.post(f"{self.endpoint_url}/diarize", files=files, data=data, timeout=90.0)
 
             if response.status_code == 200:
                 raw_segments = response.json()
@@ -48,8 +48,8 @@ class GCPCloudRunDiarizer(BaseDiarizer):
                     ))
                 if output:
                     return output
-        except Exception:
+        except Exception as e:
+            print(f"[GCP Provider Error]: {e}")
             pass
 
-        # High-accuracy Neural Whisper + Acoustic Clustering fallback
         return neural_whisper_diarizer.diarize_audio(audio_path, num_speakers=num_speakers, provider_tag="GCP GPU")

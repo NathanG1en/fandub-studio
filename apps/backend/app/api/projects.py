@@ -58,6 +58,50 @@ async def process_project_background(project_id: str, youtube_url: str, provider
             await ws_manager.broadcast(project_id, {"type": "project_error", "project_id": project_id, "error": str(e)})
 
 
+async def run_resegment_background(project_id: str, provider_id: str, num_speakers: int, enable_sam_audio: bool):
+    from app.core.database import AsyncSessionLocal
+    async with AsyncSessionLocal() as db:
+        stmt = select(Project).where(Project.id == project_id)
+        res = await db.execute(stmt)
+        project = res.scalar_one_or_none()
+        if not project:
+            return
+
+        try:
+            # Clear existing recordings, segments, and speakers in foreign-key safe cascade order
+            subq = select(DialogueSegment.id).where(DialogueSegment.project_id == project_id)
+            await db.execute(delete(Recording).where(Recording.segment_id.in_(subq)))
+            await db.execute(delete(DialogueSegment).where(DialogueSegment.project_id == project_id))
+            await db.execute(delete(Speaker).where(Speaker.project_id == project_id))
+            await db.commit()
+
+            audio_url = project.audio_url or f"/storage/{project_id}/original_audio.wav"
+            try:
+                await create_project_segments_and_speakers(
+                    db,
+                    project_id,
+                    audio_url,
+                    num_speakers=num_speakers,
+                    provider_id=provider_id
+                )
+            except Exception:
+                await create_project_segments_and_speakers(
+                    db,
+                    project_id,
+                    audio_url,
+                    num_speakers=num_speakers,
+                    provider_id="spectral_vad"
+                )
+
+            project.status = "ready"
+            await db.commit()
+            await ws_manager.broadcast(project_id, {"type": "segment_updated", "project_id": project_id})
+        except Exception as e:
+            project.status = "error"
+            await db.commit()
+            await ws_manager.broadcast(project_id, {"type": "project_error", "project_id": project_id, "error": str(e)})
+
+
 @router.post("/projects", response_model=ProjectResponse, status_code=201)
 async def create_project(payload: ProjectCreate, background_tasks: BackgroundTasks, db: AsyncSession = Depends(get_db)):
     project = Project(
@@ -90,29 +134,29 @@ async def get_project(project_id: str, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/projects/{project_id}/resegment", response_model=ProjectResponse)
-async def resegment_project(project_id: str, payload: ResegmentRequest, db: AsyncSession = Depends(get_db)):
+async def resegment_project(
+    project_id: str,
+    payload: ResegmentRequest,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db)
+):
     stmt = select(Project).where(Project.id == project_id)
     res = await db.execute(stmt)
     project = res.scalar_one_or_none()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    # Clear existing segments and speakers
-    await db.execute(delete(DialogueSegment).where(DialogueSegment.project_id == project_id))
-    await db.execute(delete(Speaker).where(Speaker.project_id == project_id))
+    project.status = "processing"
     await db.commit()
-
-    audio_url = project.audio_url or f"/storage/{project_id}/original_audio.wav"
-    await create_project_segments_and_speakers(
-        db,
-        project_id,
-        audio_url,
-        num_speakers=payload.num_speakers,
-        provider_id=payload.provider_id
-    )
-
     await db.refresh(project)
-    await ws_manager.broadcast(project_id, {"type": "segment_updated", "project_id": project_id})
+
+    background_tasks.add_task(
+        run_resegment_background,
+        project_id,
+        payload.provider_id,
+        payload.num_speakers,
+        payload.enable_sam_audio
+    )
     return project
 
 

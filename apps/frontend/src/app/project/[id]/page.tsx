@@ -3,7 +3,7 @@
 import { useEffect, useState, use, useCallback } from 'react';
 import Link from 'next/link';
 import dynamic from 'next/dynamic';
-import { Film, Share2, Download, ArrowLeft, Loader2, Check, Settings2 } from 'lucide-react';
+import { Film, Share2, Download, ArrowLeft, Loader2, Check, Settings2, AlertTriangle, X } from 'lucide-react';
 import { VideoPlayer } from '@/components/VideoPlayer';
 import { SpeakerPanel } from '@/components/SpeakerPanel';
 import { ExportModal } from '@/components/ExportModal';
@@ -50,6 +50,7 @@ export default function ProjectStudio({ params }: PageProps) {
   const [isExportOpen, setIsExportOpen] = useState(false);
   const [isDiarizationSelectorOpen, setIsDiarizationSelectorOpen] = useState(false);
   const [copiedInvite, setCopiedInvite] = useState(false);
+  const [globalError, setGlobalError] = useState<string | null>(null);
 
   const fetchProject = useCallback(async () => {
     try {
@@ -60,9 +61,11 @@ export default function ProjectStudio({ params }: PageProps) {
         if (!selectedSegmentId && data.segments?.length > 0) {
           setSelectedSegmentId(data.segments[0].id);
         }
+      } else {
+        setGlobalError(`HTTP ${res.status}: Failed to fetch studio project data`);
       }
-    } catch (err) {
-      console.error('Error fetching project:', err);
+    } catch (err: any) {
+      setGlobalError(`Network Error: ${err?.message || 'Failed to connect to backend server'}`);
     } finally {
       setLoading(false);
     }
@@ -81,57 +84,68 @@ export default function ProjectStudio({ params }: PageProps) {
   const handleWSMessage = useCallback((event: any) => {
     if (event.type === 'project_ready' || event.type === 'speaker_renamed' || event.type === 'segment_updated' || event.type === 'recording_uploaded') {
       fetchProject();
+    } else if (event.type === 'project_error') {
+      setGlobalError(`[Backend Pipeline Error] ${event.error || 'Diarization processing failed'}`);
     }
   }, [fetchProject]);
 
   useWebSocket(projectId, handleWSMessage);
 
   const handleRunDiarization = async (providerId: string, numSpeakers: number, enableSAMAudio: boolean) => {
-    try {
-      const res = await fetch(`/api/projects/${projectId}/resegment`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          provider_id: providerId,
-          num_speakers: numSpeakers,
-          enable_sam_audio: enableSAMAudio,
-        }),
-      });
-      if (res.ok) {
-        fetchProject();
-      }
-    } catch (err) {
-      console.error('Error running diarization:', err);
+    setGlobalError(null);
+    const res = await fetch(`/api/projects/${projectId}/resegment`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        provider_id: providerId,
+        num_speakers: numSpeakers,
+        enable_sam_audio: enableSAMAudio,
+      }),
+    });
+    if (!res.ok) {
+      const errJson = await res.json().catch(() => ({}));
+      const msg = errJson.detail || `HTTP ${res.status}: Resegmentation request failed`;
+      setGlobalError(`[Diarization Error] ${msg}`);
+      throw new Error(msg);
     }
+    fetchProject();
   };
 
   const handleSplitSegment = async (segmentId: string, splitTime: number) => {
     try {
+      setGlobalError(null);
       const res = await fetch(`/api/segments/${segmentId}/split`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ split_time: splitTime }),
       });
-      if (res.ok) {
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        setGlobalError(`[Split Segment Error] ${errJson.detail || 'Failed to split segment'}`);
+      } else {
         fetchProject();
       }
-    } catch (err) {
-      console.error('Error splitting segment:', err);
+    } catch (err: any) {
+      setGlobalError(`[Split Error] ${err.message}`);
     }
   };
 
   const handleMergeSegments = async (segmentIds: string[]) => {
     try {
+      setGlobalError(null);
       const res = await fetch('/api/segments/merge', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ segment_ids: segmentIds }),
       });
-      if (res.ok) {
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        setGlobalError(`[Merge Segment Error] ${errJson.detail || 'Failed to merge segments'}`);
+      } else {
         fetchProject();
       }
-    } catch (err) {
-      console.error('Error merging segments:', err);
+    } catch (err: any) {
+      setGlobalError(`[Merge Error] ${err.message}`);
     }
   };
 
@@ -143,8 +157,8 @@ export default function ProjectStudio({ params }: PageProps) {
         body: JSON.stringify({ name, color }),
       });
       fetchProject();
-    } catch (err) {
-      console.error('Error updating speaker:', err);
+    } catch (err: any) {
+      setGlobalError(`[Speaker Update Error] ${err.message}`);
     }
   };
 
@@ -157,8 +171,8 @@ export default function ProjectStudio({ params }: PageProps) {
         body: JSON.stringify({ speaker_id: speakerId }),
       });
       fetchProject();
-    } catch (err) {
-      console.error('Error assigning speaker to segment:', err);
+    } catch (err: any) {
+      setGlobalError(`[Assign Speaker Error] ${err.message}`);
     }
   };
 
@@ -171,7 +185,11 @@ export default function ProjectStudio({ params }: PageProps) {
       method: 'POST',
       body: formData,
     });
-    if (!res.ok) throw new Error('Upload failed');
+    if (!res.ok) {
+      const msg = `HTTP ${res.status}: Voiceover upload failed`;
+      setGlobalError(`[Upload Error] ${msg}`);
+      throw new Error(msg);
+    }
     fetchProject();
   };
 
@@ -179,7 +197,10 @@ export default function ProjectStudio({ params }: PageProps) {
     const res = await fetch(`/api/projects/${projectId}/export`, {
       method: 'POST',
     });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      setGlobalError(`HTTP ${res.status}: Failed to start export rendering engine`);
+      return null;
+    }
     const data = await res.json();
     return data.export_url || null;
   };
@@ -269,6 +290,23 @@ export default function ProjectStudio({ params }: PageProps) {
           </button>
         </div>
       </header>
+
+      {/* Explicit Global Error Banner */}
+      {globalError && (
+        <div className="w-full bg-red-950/90 border-b border-red-800 px-6 py-2.5 flex items-center justify-between text-xs text-red-200 font-mono-code z-30 animate-in fade-in">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-red-400 shrink-0" />
+            <span className="font-bold uppercase tracking-wider text-red-400">Execution Failure:</span>
+            <span>{globalError}</span>
+          </div>
+          <button
+            onClick={() => setGlobalError(null)}
+            className="p-1 rounded hover:bg-red-900/60 text-red-300 hover:text-white"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
 
       {/* Main Studio Area */}
       <main className="flex-1 p-6 grid grid-cols-1 lg:grid-cols-3 gap-6 max-w-7xl w-full mx-auto">

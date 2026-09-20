@@ -4,6 +4,7 @@ from httpx import AsyncClient, ASGITransport
 from app.main import app
 from app.core.database import init_db
 from app.services.sam_audio import sam_segmenter
+from app.api.projects import run_resegment_background
 
 @pytest.fixture(autouse=True)
 async def setup_database():
@@ -29,10 +30,17 @@ async def test_resegment_split_merge_endpoints():
         assert c_res.status_code == 201
         project_id = c_res.json()["id"]
 
-        # Trigger re-segmentation
+        # Trigger re-segmentation API
         reseg_res = await ac.post(f"/api/projects/{project_id}/resegment", json={"num_speakers": 2, "min_speech_duration": 0.4})
         assert reseg_res.status_code == 200
-        proj_data = reseg_res.json()
+
+        # Run background resegmentation task directly for test verification
+        await run_resegment_background(project_id, provider_id="spectral_vad", num_speakers=2, enable_sam_audio=True)
+
+        # Fetch updated project with fresh segments
+        proj_res = await ac.get(f"/api/projects/{project_id}")
+        assert proj_res.status_code == 200
+        proj_data = proj_res.json()
         assert len(proj_data["segments"]) >= 1
 
         seg1 = proj_data["segments"][0]
